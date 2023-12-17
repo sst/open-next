@@ -3,8 +3,7 @@ import type { IncomingMessage } from "node:http";
 import https from "node:https";
 import path from "node:path";
 
-import type { SQSEvent } from "aws-lambda";
-
+import { createGenericHandler } from "../core/createGenericHandler.js";
 import { debug, error } from "./logger.js";
 
 const prerenderManifest = loadPrerenderManifest();
@@ -17,9 +16,17 @@ interface PrerenderManifest {
   };
 }
 
-export const handler = async (event: SQSEvent) => {
-  for (const record of event.Records) {
-    const { host, url } = JSON.parse(record.body);
+export interface RevalidateEvent {
+  type: "revalidate";
+  records: {
+    host: string;
+    url: string;
+  }[];
+}
+
+const defaultHandler = async (event: RevalidateEvent) => {
+  for (const record of event.records) {
+    const { host, url } = record;
     debug(`Revalidating stale page`, { host, url });
 
     // Make a HEAD request to the page to revalidate it. This will trigger
@@ -49,7 +56,15 @@ export const handler = async (event: SQSEvent) => {
       req.end();
     });
   }
+  return {
+    type: "revalidate",
+  };
 };
+
+export const handler = await createGenericHandler({
+  handler: defaultHandler,
+  type: "revalidate",
+});
 
 function loadPrerenderManifest() {
   const filePath = path.join("prerender-manifest.json");

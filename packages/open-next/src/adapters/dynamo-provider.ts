@@ -1,20 +1,16 @@
-import {
-  BatchWriteItemCommand,
-  DynamoDBClient,
-} from "@aws-sdk/client-dynamodb";
-import { CdkCustomResourceEvent, CdkCustomResourceResponse } from "aws-lambda";
 import { readFileSync } from "fs";
 
+import { createGenericHandler } from "../core/createGenericHandler.js";
+import { resolveTagCache } from "../core/resolve.js";
 import {
   getDynamoBatchWriteCommandConcurrency,
   MAX_DYNAMO_BATCH_WRITE_ITEM_COUNT,
 } from "./constants.js";
 import { chunk } from "./util.js";
 
-const PHYSICAL_RESOURCE_ID = "dynamodb-cache";
+const PHYSICAL_RESOURCE_ID = "dynamodb-cache" as const;
 
-const dynamoClient = new DynamoDBClient({});
-
+//TODO: modify this, we should use the same format as the cache
 type DataType = {
   tag: {
     S: string;
@@ -27,62 +23,69 @@ type DataType = {
   };
 };
 
-export async function handler(
-  event: CdkCustomResourceEvent,
-): Promise<CdkCustomResourceResponse> {
-  switch (event.RequestType) {
-    case "Create":
-    case "Update":
-      return insert();
-    case "Delete":
+interface InitializationFunctionEvent {
+  type: "initializationFunction";
+  requestType: "create" | "update" | "delete";
+  resourceId: typeof PHYSICAL_RESOURCE_ID;
+}
+
+const tagCache = await resolveTagCache(
+  globalThis.openNextConfig?.initializationFunction?.tagCache,
+);
+
+export const handler = await createGenericHandler({
+  handler: defaultHandler,
+  type: "initializationFunction",
+});
+
+async function defaultHandler(
+  event: InitializationFunctionEvent,
+): Promise<InitializationFunctionEvent> {
+  switch (event.requestType) {
+    case "create":
+    case "update":
+      return insert(event.requestType);
+    case "delete":
       return remove();
   }
 }
 
-async function insert(): Promise<CdkCustomResourceResponse> {
-  const tableName = process.env.CACHE_DYNAMO_TABLE!;
-
+async function insert(
+  requestType: InitializationFunctionEvent["requestType"],
+): Promise<InitializationFunctionEvent> {
   const file = readFileSync(`dynamodb-cache.json`, "utf8");
 
   const data: DataType[] = JSON.parse(file);
 
-  const dataChunks = chunk(data, MAX_DYNAMO_BATCH_WRITE_ITEM_COUNT);
+  const parsedData = data.map((item) => ({
+    tag: item.tag.S,
+    path: item.path.S,
+    revalidatedAt: parseInt(item.revalidatedAt.N),
+  }));
 
-  const batchWriteParamsArray = dataChunks.map((chunk) => {
-    return {
-      RequestItems: {
-        [tableName]: chunk.map((item) => ({
-          PutRequest: {
-            Item: item,
-          },
-        })),
-      },
-    };
-  });
+  const dataChunks = chunk(parsedData, MAX_DYNAMO_BATCH_WRITE_ITEM_COUNT);
 
   const paramsChunks = chunk(
-    batchWriteParamsArray,
+    dataChunks,
     getDynamoBatchWriteCommandConcurrency(),
   );
 
   for (const paramsChunk of paramsChunks) {
-    await Promise.all(
-      paramsChunk.map((params) =>
-        dynamoClient.send(new BatchWriteItemCommand(params)),
-      ),
-    );
+    await Promise.all(paramsChunk.map((params) => tagCache.writeTags(params)));
   }
 
   return {
-    PhysicalResourceId: PHYSICAL_RESOURCE_ID,
-    Data: {},
+    type: "initializationFunction",
+    requestType,
+    resourceId: PHYSICAL_RESOURCE_ID,
   };
 }
 
-async function remove(): Promise<CdkCustomResourceResponse> {
+async function remove(): Promise<InitializationFunctionEvent> {
   // Do we want to actually delete anything here?
   return {
-    PhysicalResourceId: PHYSICAL_RESOURCE_ID,
-    Data: {},
+    type: "initializationFunction",
+    requestType: "delete",
+    resourceId: PHYSICAL_RESOURCE_ID,
   };
 }

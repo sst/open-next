@@ -1,16 +1,15 @@
-import { IncomingMessage, ServerResponse } from "node:http";
+import {
+  IncomingMessage,
+  OutgoingHttpHeaders,
+  ServerResponse,
+} from "node:http";
 import https from "node:https";
 import path from "node:path";
 import { Writable } from "node:stream";
 
 import { GetObjectCommand, S3Client } from "@aws-sdk/client-s3";
-import type {
-  APIGatewayProxyEvent,
-  APIGatewayProxyEventHeaders,
-  APIGatewayProxyEventQueryStringParameters,
-  APIGatewayProxyEventV2,
-  APIGatewayProxyResultV2,
-} from "aws-lambda";
+import type { APIGatewayProxyEventHeaders } from "aws-lambda";
+import { loadConfig } from "config/util.js";
 // @ts-ignore
 import { defaultConfig } from "next/dist/server/config-shared";
 import {
@@ -20,8 +19,9 @@ import {
 } from "next/dist/server/image-optimizer";
 // @ts-ignore
 import type { NextUrlWithParsedQuery } from "next/dist/server/request-meta";
+import { InternalEvent, InternalResult } from "types/open-next.js";
 
-import { loadConfig } from "./config/util.js";
+import { createGenericHandler } from "../core/createGenericHandler.js";
 import { awsLogger, debug, error } from "./logger.js";
 import { setNodeEnv } from "./util.js";
 
@@ -50,15 +50,20 @@ debug("Init config", {
 // Handler //
 /////////////
 
-export async function handler(
-  event: APIGatewayProxyEventV2 | APIGatewayProxyEvent,
-): Promise<APIGatewayProxyResultV2> {
+export const handler = await createGenericHandler({
+  handler: defaultHandler,
+  type: "imageOptimization",
+});
+
+export async function defaultHandler(
+  event: InternalEvent,
+): Promise<InternalResult> {
   // Images are handled via header and query param information.
   debug("handler event", event);
-  const { headers: rawHeaders, queryStringParameters: queryString } = event;
+  const { headers, query: queryString } = event;
 
   try {
-    const headers = normalizeHeaderKeysToLowercase(rawHeaders);
+    // const headers = normalizeHeaderKeysToLowercase(rawHeaders);
     ensureBucketExists();
     const imageParams = validateImageParams(
       headers,
@@ -76,13 +81,13 @@ export async function handler(
 // Helper functions //
 //////////////////////
 
-function normalizeHeaderKeysToLowercase(headers: APIGatewayProxyEventHeaders) {
-  // Make header keys lowercase to ensure integrity
-  return Object.entries(headers).reduce(
-    (acc, [key, value]) => ({ ...acc, [key.toLowerCase()]: value }),
-    {} as APIGatewayProxyEventHeaders,
-  );
-}
+// function normalizeHeaderKeysToLowercase(headers: APIGatewayProxyEventHeaders) {
+//   // Make header keys lowercase to ensure integrity
+//   return Object.entries(headers).reduce(
+//     (acc, [key, value]) => ({ ...acc, [key.toLowerCase()]: value }),
+//     {} as APIGatewayProxyEventHeaders,
+//   );
+// }
 
 function ensureBucketExists() {
   if (!BUCKET_NAME) {
@@ -91,15 +96,15 @@ function ensureBucketExists() {
 }
 
 function validateImageParams(
-  headers: APIGatewayProxyEventHeaders,
-  queryString?: APIGatewayProxyEventQueryStringParameters,
+  headers: OutgoingHttpHeaders,
+  query?: InternalEvent["query"],
 ) {
   // Next.js checks if external image URL matches the
   // `images.remotePatterns`
   const imageParams = ImageOptimizerCache.validateParams(
     // @ts-ignore
     { headers },
-    queryString,
+    query,
     nextConfig,
     false,
   );
@@ -127,8 +132,9 @@ async function optimizeImage(
   return result;
 }
 
-function buildSuccessResponse(result: any) {
+function buildSuccessResponse(result: any): InternalResult {
   return {
+    type: "core",
     statusCode: 200,
     body: result.buffer.toString("base64"),
     isBase64Encoded: true,
@@ -140,9 +146,11 @@ function buildSuccessResponse(result: any) {
   };
 }
 
-function buildFailureResponse(e: any) {
+function buildFailureResponse(e: any): InternalResult {
   debug(e);
   return {
+    type: "core",
+    isBase64Encoded: false,
     statusCode: 500,
     headers: {
       Vary: "Accept",
@@ -153,6 +161,31 @@ function buildFailureResponse(e: any) {
     body: e?.message || e?.toString() || e,
   };
 }
+
+const resolveLoader = () => {
+  const openNextParams = globalThis.openNextConfig.imageOptimization;
+  if (typeof openNextParams?.loader === "function") {
+    return openNextParams.loader();
+  } else {
+    return Promise.resolve(async (key: string) => {
+      const keyPrefix = BUCKET_KEY_PREFIX?.replace(/^\/|\/$/g, "");
+      const response = await s3Client.send(
+        new GetObjectCommand({
+          Bucket: BUCKET_NAME,
+          Key: keyPrefix
+            ? keyPrefix + "/" + key.replace(/^\//, "")
+            : key.replace(/^\//, ""),
+        }),
+      );
+      return {
+        body: response.Body,
+        contentType: response.ContentType,
+        cacheControl: response.CacheControl,
+      };
+    });
+  }
+};
+const loader = await resolveLoader();
 
 async function downloadHandler(
   _req: IncomingMessage,
@@ -186,30 +219,23 @@ async function downloadHandler(
     else {
       // Download image from S3
       // note: S3 expects keys without leading `/`
-      const keyPrefix = BUCKET_KEY_PREFIX?.replace(/^\/|\/$/g, "");
-      const response = await s3Client.send(
-        new GetObjectCommand({
-          Bucket: BUCKET_NAME,
-          Key: keyPrefix
-            ? keyPrefix + "/" + url.href.replace(/^\//, "")
-            : url.href.replace(/^\//, ""),
-        }),
-      );
 
-      if (!response.Body) {
+      const response = await loader(url.href);
+
+      if (!response.body) {
         throw new Error("Empty response body from the S3 request.");
       }
 
       // @ts-ignore
-      pipeRes(response.Body, res);
+      pipeRes(response.body, res);
 
       // Respect the bucket file's content-type and cache-control
       // imageOptimizer will use this to set the results.maxAge
-      if (response.ContentType) {
-        res.setHeader("Content-Type", response.ContentType);
+      if (response.contentType) {
+        res.setHeader("Content-Type", response.contentType);
       }
-      if (response.CacheControl) {
-        res.setHeader("Cache-Control", response.CacheControl);
+      if (response.cacheControl) {
+        res.setHeader("Cache-Control", response.cacheControl);
       }
     }
   } catch (e: any) {

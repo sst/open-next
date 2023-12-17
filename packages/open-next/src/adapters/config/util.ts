@@ -1,12 +1,13 @@
 import fs from "fs";
 import path from "path";
-
-import { PublicFiles } from "../../build";
 import {
+  MiddlewareManifest,
   NextConfig,
   PrerenderManifest,
   RoutesManifest,
-} from "../types/next-types";
+} from "types/next-types";
+
+import { PublicFiles } from "../../build";
 
 export function loadConfig(nextDir: string) {
   const filePath = path.join(nextDir, "required-server-files.json");
@@ -99,4 +100,10 @@ export function loadAppPathsManifestKeys(nextDir: string) {
     // We need to check if the cleaned key is empty because it means it's the root path
     return cleanedKey === "" ? "/" : cleanedKey;
   });
+}
+
+export function loadMiddlewareManifest(nextDir: string) {
+  const filePath = path.join(nextDir, "server", "middleware-manifest.json");
+  const json = fs.readFileSync(filePath, "utf-8");
+  return JSON.parse(json) as MiddlewareManifest;
 }

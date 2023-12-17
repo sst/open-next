@@ -8,22 +8,7 @@ if (command !== "build") printHelp();
 const args = parseArgs();
 if (Object.keys(args).includes("--help")) printHelp();
 
-build({
-  buildCommand: args["--build-command"],
-  buildOutputPath: args["--build-output-path"],
-  appPath: args["--app-path"],
-  packageJsonPath: args["--package-json"],
-  minify: Object.keys(args).includes("--minify"),
-  streaming: Object.keys(args).includes("--streaming"),
-  dangerous: {
-    disableDynamoDBCache: Object.keys(args).includes(
-      "--dangerously-disable-dynamodb-cache",
-    ),
-    disableIncrementalCache: Object.keys(args).includes(
-      "--dangerously-disable-incremental-cache",
-    ),
-  },
-});
+build();
 
 function parseArgs() {
   return process.argv.slice(2).reduce(
