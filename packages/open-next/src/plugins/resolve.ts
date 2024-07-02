@@ -10,6 +10,8 @@ import type {
 } from "types/open-next";
 
 import logger from "../logger.js";
+import path from "path";
+import escapeStringRegexp from 'escape-string-regexp';
 
 export interface IPluginSettings {
   overrides?: {
@@ -44,7 +46,11 @@ export function openNextResolvePlugin({
     name: "opennext-resolve",
     setup(build) {
       logger.debug(`OpenNext Resolve plugin for ${fnName}`);
-      build.onLoad({ filter: /core\/resolve.js/g }, async (args) => {
+      const filter = new RegExp(
+        escapeStringRegexp(path.join("core", "resolve.js")),
+        "g",
+      );
+      build.onLoad({ filter }, async (args) => {
         let contents = readFileSync(args.path, "utf-8");
         //TODO: refactor this. Every override should be at the same place so we can generate this dynamically
         if (overrides?.wrapper) {

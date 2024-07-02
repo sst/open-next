@@ -276,6 +276,9 @@ importers:
       esbuild:
         specifier: 0.19.2
         version: 0.19.2
+      escape-string-regexp:
+        specifier: ^5.0.0
+        version: 5.0.0
       path-to-regexp:
         specifier: ^6.2.1
         version: 6.2.1
