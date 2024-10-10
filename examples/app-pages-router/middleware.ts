@@ -21,15 +21,15 @@ export function middleware(request: NextRequest) {
         "content-type": "application/json",
       },
     });
+  } else {
+    const rHeaders = new Headers(request.headers);
+    const r = NextResponse.next({
+      request: {
+        headers: rHeaders,
+      },
+    });
+    return r;
   }
-
-  const rHeaders = new Headers(request.headers);
-  const r = NextResponse.next({
-    request: {
-      headers: rHeaders,
-    },
-  });
-  return r;
 }
 
 export const config = {

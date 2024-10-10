@@ -32,6 +32,14 @@ module.exports = {
 
     "@typescript-eslint/no-non-null-assertion": "warn",
   },
+  overrides: [
+    {
+      files: ["example/**/*", "examples/**/*"],
+      rules: {
+        "unused-imports/no-unused-vars": "off",
+      },
+    },
+  ],
   parserOptions: {
     project: ["./tsconfig.eslint.json", "./**/tsconfig.json"],
   },
