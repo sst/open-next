@@ -237,6 +237,7 @@ export default class S3Cache {
               rscData: Buffer.from(cacheData.rsc),
               status: meta?.status,
               headers: meta?.headers,
+              postponed: meta?.postponed,
             },
           } as CacheHandlerValue;
         }

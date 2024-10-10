@@ -73,4 +73,5 @@ export type Extension = "cache" | "fetch";
 export interface Meta {
   status?: number;
   headers?: Record<string, undefined | string | string[]>;
+  postponed?: string;
 }
