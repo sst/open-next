@@ -336,7 +336,29 @@ File ${serverPath} does not exist
     }
     if (symlink) {
       try {
-        symlinkSync(symlink, to);
+        if (process.platform === "win32") {
+          // On Windows, recreating the link from the raw readlink value breaks:
+          // `symlinkSync` without a `type` autodetects from the target, and when
+          // the target does not exist yet (common here, since entries are copied
+          // in traversal order) it falls back to a *file*-type symlink pointing
+          // at a directory, which Windows cannot traverse (esbuild later fails
+          // with "Cannot read directory ...: Access is denied").
+          // Instead, create a junction whose target is the raw value resolved
+          // against the destination's parent directory — semantically identical
+          // to what the relative symlink means on Linux (it points into the
+          // mirrored output structure). Junctions only apply to directories
+          // (every pnpm link recreated here is one), need no admin rights or
+          // Developer Mode, and resolve lazily once the target is populated.
+          const rawTarget = symlink.startsWith("\\\\?\\")
+            ? symlink.slice(4)
+            : symlink;
+          const target = path.isAbsolute(rawTarget)
+            ? rawTarget
+            : path.resolve(path.dirname(to), rawTarget);
+          symlinkSync(target, to, "junction");
+        } else {
+          symlinkSync(symlink, to);
+        }
       } catch (e: any) {
         if (e.code !== "EEXIST") {
           throw e;
