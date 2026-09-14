@@ -85,6 +85,16 @@ export function isNonLinuxPlatformPackage(srcPath: string): boolean {
   return nonLinuxPlatformRegex.test(srcPath);
 }
 
+// `path.basename` only splits on the OS-native separator, so we explicitly
+// look at both `/` and `\` to handle paths produced under either platform.
+export function isPackageJson(modulePath: string): boolean {
+  const lastSep = Math.max(
+    modulePath.lastIndexOf("/"),
+    modulePath.lastIndexOf("\\"),
+  );
+  return modulePath.slice(lastSep + 1) === "package.json";
+}
+
 function copyPatchFile(outputDir: string) {
   const patchFile = path.join(__dirname, "patch", "patchedAsyncStorage.js");
   const outputPatchFile = path.join(outputDir, "patchedAsyncStorage.cjs");
@@ -153,7 +163,7 @@ export async function copyTracedFiles({
       filesToCopy.set(src, dst);
 
       const module = path.join(dotNextDir, subDir, tracedPath);
-      if (module.endsWith("package.json")) {
+      if (isPackageJson(module)) {
         nodePackages.set(path.dirname(module), path.dirname(dst));
       }
     });
