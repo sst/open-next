@@ -1,4 +1,6 @@
 import { AsyncLocalStorage } from "node:async_hooks";
+import { Readable } from "node:stream";
+import { pipeline } from "node:stream/promises";
 
 import type { OpenNextNodeResponse } from "http/index.js";
 import { IncomingMessage } from "http/index.js";
@@ -161,10 +163,9 @@ export async function openNextHandler(
           response.statusCode = routingResult.statusCode;
           response.flushHeaders();
           const [bodyToConsume, bodyToReturn] = routingResult.body.tee();
-          for await (const chunk of bodyToConsume) {
-            response.write(chunk);
-          }
-          response.end();
+          // Use pipeline so the streamCreator Writable can apply backpressure
+          // instead of eagerly consuming the whole Web stream.
+          await pipeline(Readable.fromWeb(bodyToConsume), response);
           routingResult.body = bodyToReturn;
         }
         return routingResult;
