@@ -19,6 +19,17 @@ const codeToPatch = `if (cachedResponse && !isOnDemandRevalidate) {
                     }
                 }`;
 
+// Next 16 renamed the local from `cachedResponse` to
+// `previousIncrementalCacheEntry` and added the `isStale !== -1` guard.
+const codeToPatchNext16 = `if (previousIncrementalCacheEntry && !context.isOnDemandRevalidate && previousIncrementalCacheEntry.isStale !== -1) {
+                    resolve(previousIncrementalCacheEntry);
+                    resolved = true;
+                    if (!previousIncrementalCacheEntry.isStale || context.isPrefetch) {
+                        // The cached value is still valid, so we don't need to update it yet.
+                        return previousIncrementalCacheEntry;
+                    }
+                }`;
+
 describe("patchBackgroundRevalidation", () => {
   it("Should patch code", () => {
     expect(
@@ -39,5 +50,26 @@ describe("patchBackgroundRevalidation", () => {
                         return null;
                     }
                 }"`);
+  });
+
+  it("Should patch code on Next 16", () => {
+    expect(
+      patchCode(codeToPatchNext16, rule),
+    ).toMatchInlineSnapshot(`"if (previousIncrementalCacheEntry && !context.isOnDemandRevalidate && previousIncrementalCacheEntry.isStale !== -1) {
+                    resolve(previousIncrementalCacheEntry);
+                    resolved = true;
+                    if (true) {
+                        // The cached value is still valid, so we don't need to update it yet.
+                        return previousIncrementalCacheEntry;
+                    }
+                }"`);
+  });
+
+  it("Should not match the outer `isStale !== -1` guard", () => {
+    // The guard must survive: it is what makes Next fall through to a blocking
+    // revalidation for entries that are past their `expire`.
+    expect(patchCode(codeToPatchNext16, rule)).toContain(
+      "previousIncrementalCacheEntry.isStale !== -1",
+    );
   });
 });

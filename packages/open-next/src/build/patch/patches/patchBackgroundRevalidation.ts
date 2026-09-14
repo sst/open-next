@@ -8,7 +8,7 @@ rule:
   all:
     - has:
         kind: unary_expression
-        regex: "!cachedResponse.isStale"
+        pattern: "!$ENTRY.isStale"
     -  has:
          kind: member_expression
          regex: "context.isPrefetch"
