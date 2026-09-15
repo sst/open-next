@@ -1027,6 +1027,169 @@ describe("CacheHandler", () => {
         cache.set("key", { kind: "REDIRECT", props: {} }),
       ).resolves.not.toThrow();
     });
+
+    describe("deferred write", () => {
+      const deferredWrite = () => {
+        let resolve!: () => void;
+        const promise = new Promise<void>((r) => {
+          resolve = r;
+        });
+        return { promise, resolve };
+      };
+
+      // Only the store write is unresolved, so a few ticks are enough for `set` to reach it.
+      const drainMicrotasks = async (ticks = 20) => {
+        for (let i = 0; i < ticks; i++) {
+          await Promise.resolve();
+        }
+      };
+
+      const useWaitUntil = () => {
+        const waitUntil = vi.fn();
+        (globalThis.__openNextAls.getStore as Mock).mockReturnValue({
+          pendingPromiseRunner: {
+            withResolvers: vi.fn().mockReturnValue({ resolve: vi.fn() }),
+          },
+          waitUntil,
+          writtenTags: new Set(),
+        });
+        return waitUntil;
+      };
+
+      it("Should hand the write to waitUntil instead of awaiting it", async () => {
+        const waitUntil = useWaitUntil();
+        const write = deferredWrite();
+        incrementalCache.set.mockReturnValueOnce(write.promise);
+        tagCache.getByPath.mockResolvedValueOnce([]);
+
+        let settled = false;
+        const set = cache
+          .set("key", {
+            kind: "APP_PAGE",
+            html: "<html></html>",
+            rscData: Buffer.from("rsc"),
+            status: 200,
+            headers: { "x-next-cache-tags": "new-tag" },
+          })
+          .then(() => {
+            settled = true;
+          });
+
+        await drainMicrotasks();
+
+        // `set` is done while the write is still pending; the write went to the runtime
+        expect(settled).toBe(true);
+        expect(incrementalCache.set).toHaveBeenCalled();
+        expect(waitUntil).toHaveBeenCalledTimes(1);
+        const handedOver = waitUntil.mock.calls[0][0];
+        expect(tagCache.getByPath).not.toHaveBeenCalled();
+
+        write.resolve();
+
+        // The tags are only updated once the entry is in the store
+        await set;
+        await expect(handedOver).resolves.toBeUndefined();
+        expect(tagCache.getByPath).toHaveBeenCalledWith("key");
+        expect(tagCache.writeTags).toHaveBeenCalledWith([
+          { path: "key", tag: "new-tag", revalidatedAt: 1 },
+        ]);
+        expect(incrementalCache.set.mock.invocationCallOrder[0]).toBeLessThan(
+          tagCache.writeTags.mock.invocationCallOrder[0] as number,
+        );
+      });
+
+      it("Should await the write when waitUntil is not available", async () => {
+        const write = deferredWrite();
+        incrementalCache.set.mockReturnValueOnce(write.promise);
+
+        let settled = false;
+        const set = cache
+          .set("key", { kind: "REDIRECT", props: {} })
+          .then(() => {
+            settled = true;
+          });
+
+        await drainMicrotasks();
+
+        expect(incrementalCache.set).toHaveBeenCalled();
+        expect(settled).toBe(false);
+
+        write.resolve();
+
+        await set;
+        expect(settled).toBe(true);
+      });
+
+      it("Should await FETCH writes even when waitUntil is available", async () => {
+        const waitUntil = useWaitUntil();
+        const write = deferredWrite();
+        incrementalCache.set.mockReturnValueOnce(write.promise);
+
+        let settled = false;
+        const set = cache
+          .set("key", {
+            kind: "FETCH",
+            data: {
+              headers: {},
+              body: "{}",
+              url: "https://example.com",
+              status: 200,
+              tags: [],
+            },
+            revalidate: 60,
+          })
+          .then(() => {
+            settled = true;
+          });
+
+        await drainMicrotasks();
+
+        // Next.js releases the fetch cache lock once the write settles
+        expect(settled).toBe(false);
+        expect(waitUntil).not.toHaveBeenCalled();
+
+        write.resolve();
+
+        await set;
+        expect(settled).toBe(true);
+      });
+
+      it("Should swallow a failed write instead of rejecting", async () => {
+        const waitUntil = useWaitUntil();
+        incrementalCache.set.mockRejectedValueOnce(new Error("Error"));
+
+        await expect(
+          cache.set("key", { kind: "REDIRECT", props: {} }),
+        ).resolves.not.toThrow();
+
+        await expect(waitUntil.mock.calls[0][0]).resolves.toBeUndefined();
+        // A failed store write skips the tag update
+        expect(tagCache.getByPath).not.toHaveBeenCalled();
+      });
+
+      it("Should await the write when there is no request context", async () => {
+        (globalThis.__openNextAls.getStore as Mock).mockReturnValue(undefined);
+        const write = deferredWrite();
+        incrementalCache.set.mockReturnValueOnce(write.promise);
+
+        let settled = false;
+        const set = cache
+          .set("key", { kind: "REDIRECT", props: {} })
+          .then(() => {
+            settled = true;
+          });
+
+        await drainMicrotasks();
+
+        expect(incrementalCache.set).toHaveBeenCalled();
+        expect(settled).toBe(false);
+
+        write.resolve();
+
+        await set;
+        expect(settled).toBe(true);
+      });
+    });
   });
 
   describe("revalidateTag", () => {
