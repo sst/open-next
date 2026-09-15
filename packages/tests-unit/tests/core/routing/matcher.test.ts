@@ -6,6 +6,7 @@ import {
   handleRewrites,
 } from "@opennextjs/aws/core/routing/matcher.js";
 import { convertFromQueryString } from "@opennextjs/aws/core/routing/util.js";
+import type { RouteHas } from "@opennextjs/aws/types/next-types.js";
 import type { InternalEvent } from "@opennextjs/aws/types/open-next.js";
 import { vi } from "vitest";
 
@@ -209,6 +210,82 @@ describe("getNextConfigHeaders", () => {
     expect(result).toEqual({
       foo: "bar",
     });
+  });
+
+  it.each([
+    {
+      name: "header",
+      event: { headers: { "x-forwarded-proto": "https" } },
+      has: {
+        type: "header",
+        key: "x-forwarded-proto",
+        value: "http",
+      },
+    },
+    {
+      name: "cookie",
+      event: { cookies: { protocol: "https" } },
+      has: { type: "cookie", key: "protocol", value: "http" },
+    },
+    {
+      name: "query",
+      event: { url: "https://on/hello-world?protocol=https" },
+      has: { type: "query", key: "protocol", value: "http" },
+    },
+    {
+      name: "host",
+      event: { headers: { host: "not-on.example" } },
+      has: { type: "host", value: "on.example" },
+    },
+  ] satisfies {
+    name: string;
+    event: PartialEvent;
+    has: RouteHas;
+  }[])("should require an exact $name value match", ({ event, has }) => {
+    const result = getNextConfigHeaders(createEvent(event), [
+      {
+        source: "/(.*)",
+        regex: "^(?:/(.*))(?:/)?$",
+        headers: [{ key: "foo", value: "bar" }],
+        has: [has],
+      },
+    ]);
+
+    expect(result).toEqual({});
+  });
+
+  it("should not match an absent value-less query condition", () => {
+    const event = createEvent({
+      url: "https://on/hello-world",
+    });
+
+    const result = getNextConfigHeaders(event, [
+      {
+        source: "/(.*)",
+        regex: "^(?:/(.*))(?:/)?$",
+        headers: [{ key: "x-robots-tag", value: "noindex" }],
+        has: [{ type: "query", key: "preview" }],
+      },
+    ]);
+
+    expect(result).toEqual({});
+  });
+
+  it("should match a present value-less query condition", () => {
+    const event = createEvent({
+      url: "https://on/hello-world?preview=1",
+    });
+
+    const result = getNextConfigHeaders(event, [
+      {
+        source: "/(.*)",
+        regex: "^(?:/(.*))(?:/)?$",
+        headers: [{ key: "x-robots-tag", value: "noindex" }],
+        has: [{ type: "query", key: "preview" }],
+      },
+    ]);
+
+    expect(result).toEqual({ "x-robots-tag": "noindex" });
   });
 
   it("should return request headers for matching /* route with missing condition", () => {

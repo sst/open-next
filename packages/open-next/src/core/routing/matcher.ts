@@ -25,6 +25,15 @@ import {
   unescapeRegex,
 } from "./util";
 
+function matchHasValue(
+  value: string | string[] | undefined,
+  pattern?: string,
+): boolean {
+  const candidate = Array.isArray(value) ? value.at(-1) : value;
+  if (!candidate) return false;
+  return pattern ? new RegExp(`^${pattern}$`).test(candidate) : true;
+}
+
 const routeHasMatcher =
   (
     headers: Record<string, string>,
@@ -34,31 +43,18 @@ const routeHasMatcher =
   (redirect: RouteHas): boolean => {
     switch (redirect.type) {
       case "header":
-        return (
-          !!headers?.[redirect.key.toLowerCase()] &&
-          new RegExp(redirect.value ?? "").test(
-            headers[redirect.key.toLowerCase()] ?? "",
-          )
+        return matchHasValue(
+          headers[redirect.key.toLowerCase()],
+          redirect.value,
         );
       case "cookie":
-        return (
-          !!cookies?.[redirect.key] &&
-          new RegExp(redirect.value ?? "").test(cookies[redirect.key] ?? "")
-        );
+        return matchHasValue(cookies[redirect.key], redirect.value);
       case "query":
-        return query[redirect.key] && Array.isArray(redirect.value)
-          ? redirect.value.reduce(
-              (prev, current) =>
-                prev || new RegExp(current).test(query[redirect.key] as string),
-              false,
-            )
-          : new RegExp(redirect.value ?? "").test(
-              (query[redirect.key] as string | undefined) ?? "",
-            );
+        return matchHasValue(query[redirect.key], redirect.value);
       case "host":
-        return (
-          headers?.host !== "" &&
-          new RegExp(redirect.value ?? "").test(headers.host)
+        return matchHasValue(
+          headers.host?.split(":", 1)[0].toLowerCase(),
+          redirect.value,
         );
       default:
         return false;
